@@ -1,0 +1,16 @@
+# Consolidated requirements for nemotron-gradio-modal
+# Contains runtime deps used by both backend (Modal/vLLM) and frontend (Gradio)
+modal
+vllm[audio]==0.20.0
+fastapi
+openai==2.36.0
+transformers
+huggingface_hub[hf_xet]
+hf_transfer
+torch==2.10.0
+gradio==6.14.0
+python-dotenv==1.2.2
+
+# Note: the backend's Modal image also performs some pip installs inside the image
+# (e.g. DeepGEMM from git). Keep those image-specific installs in the image build
+# step inside `backend/app.py` if you want them isolated to the Modal runtime.
