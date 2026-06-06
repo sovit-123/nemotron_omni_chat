@@ -7,10 +7,26 @@ from pathlib import Path
 import gradio as gr
 from openai import APIError, OpenAI
 from dotenv import load_dotenv
+from pypdf import PdfReader
+from docx import Document
+import chromadb
+from chromadb.config import Settings
+from sentence_transformers import SentenceTransformer
 
 load_dotenv()
 
 API_BASE_URL = os.getenv("API_BASE_URL")
+
+# Initialize in-memory ChromaDB and embedding model
+chroma_client = chromadb.Client(Settings(anonymized_telemetry=False))
+collection = chroma_client.get_or_create_collection(
+    name="session_documents",
+    metadata={"hnsw:space": "cosine"}
+)
+embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+
+# Track uploaded files to avoid re-processing
+uploaded_files = set()
 
 client = OpenAI(
     base_url=API_BASE_URL,
@@ -64,6 +80,65 @@ input[type="checkbox"] {
     accent-color: #ff761d;
 }
 """
+
+
+def extract_text_from_pdf(file_path):
+    reader = PdfReader(file_path)
+    text = ""
+    for page in reader.pages:
+        text += page.extract_text() + "\n"
+    return text
+
+
+def extract_text_from_docx(file_path):
+    doc = Document(file_path)
+    text = ""
+    for paragraph in doc.paragraphs:
+        text += paragraph.text + "\n"
+    return text
+
+
+def extract_text_from_txt(file_path):
+    with open(file_path, 'r', encoding='utf-8') as f:
+        return f.read()
+
+
+def chunk_text(text, chunk_size=500, overlap=50):
+    chunks = []
+    words = text.split()
+    for i in range(0, len(words), chunk_size - overlap):
+        chunk = " ".join(words[i:i + chunk_size])
+        if chunk.strip():
+            chunks.append(chunk)
+    return chunks
+
+
+def add_document_to_chroma(doc_id, text):
+    chunks = chunk_text(text)
+    embeddings = embedding_model.encode(chunks).tolist()
+    
+    ids = [f"{doc_id}_{i}" for i in range(len(chunks))]
+    
+    collection.add(
+        ids=ids,
+        embeddings=embeddings,
+        documents=chunks
+    )
+    
+    return len(chunks)
+
+
+def search_documents(query, top_k=3):
+    query_embedding = embedding_model.encode([query]).tolist()
+    
+    results = collection.query(
+        query_embeddings=query_embedding,
+        n_results=top_k
+    )
+    
+    if results['documents'] and results['documents'][0]:
+        return results['documents'][0]
+    return []
 
 
 def media_type_from_path_or_mime(path=None, mime=None):
@@ -309,6 +384,18 @@ def extract_text(content):
                 if parsed_text:
                     return parsed_text
 
+        if stripped_content.startswith("{") and stripped_content.endswith("}"):
+            try:
+                parsed_content = ast.literal_eval(stripped_content)
+            except (SyntaxError, ValueError):
+                parsed_content = None
+
+            if isinstance(parsed_content, dict):
+                parsed_text = extract_text(parsed_content)
+
+                if parsed_text:
+                    return parsed_text
+
         return content
 
     if isinstance(content, list):
@@ -329,7 +416,8 @@ def extract_text(content):
                 if text:
                     text_parts.append(text)
 
-        return "".join(text_parts)
+        result = "".join(text_parts)
+        return result if result else content
 
     if isinstance(content, dict):
 
@@ -454,7 +542,7 @@ def normalize_history(history):
     return messages
 
 
-def chat(message, history, max_tokens, enable_thinking):
+def chat(message, history, max_tokens, enable_thinking, enable_rag, rag_files):
 
     text = message.get("text", "")
 
@@ -468,6 +556,56 @@ def chat(message, history, max_tokens, enable_thinking):
         yield f"Could not prepare request: {error}"
         return
 
+    if enable_rag and rag_files and text.strip():
+        # Check if new files were uploaded
+        current_file_paths = set()
+        for file in rag_files:
+            file_path = get_file_path(file)
+            current_file_paths.add(file_path)
+        
+        # Only clear and re-add if new files were uploaded
+        if current_file_paths != uploaded_files:
+            all_docs = collection.get()
+            if all_docs['ids']:
+                collection.delete(ids=all_docs['ids'])
+            
+            uploaded_files.clear()
+            
+            for file in rag_files:
+                file_path = get_file_path(file)
+                ext = Path(file_path).suffix.lower()
+                
+                try:
+                    if ext == ".pdf":
+                        doc_text = extract_text_from_pdf(file_path)
+                    elif ext == ".docx":
+                        doc_text = extract_text_from_docx(file_path)
+                    elif ext == ".txt":
+                        doc_text = extract_text_from_txt(file_path)
+                    else:
+                        continue
+                    
+                    doc_id = os.path.basename(file_path)
+                    add_document_to_chroma(doc_id, doc_text)
+                    uploaded_files.add(file_path)
+                except Exception as e:
+                    print(f"Error processing {file_path}: {e}")
+        
+        # Vector search using ChromaDB
+        relevant_chunks = search_documents(text, top_k=3)
+        print(f"Relevant chunks: {relevant_chunks}")
+        if relevant_chunks:
+            context = "\n\n".join(relevant_chunks)
+            if len(current_message["content"]) > 1:
+                current_message["content"] = [
+                    {"type": "text", "text": f"Context from documents:\n{context}\n\nUser question: {text}"}
+                ] + current_message["content"][1:]
+            else:
+                current_message["content"] = [
+                    {"type": "text", "text": f"Context from documents:\n{context}\n\nUser question: {text}"}
+                ]
+
+    print(current_message)
     messages.append(current_message)
 
     try:
@@ -573,6 +711,15 @@ demo = gr.ChatInterface(
         gr.Checkbox(
             value=False,
             label="Show reasoning",
+        ),
+        gr.Checkbox(
+            value=False,
+            label="Enable RAG",
+        ),
+        gr.File(
+            file_types=[".pdf", ".txt", ".docx"],
+            file_count="multiple",
+            label="Upload documents for RAG (PDF, TXT, DOCX)",
         ),
     ],
 
