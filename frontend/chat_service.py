@@ -1,8 +1,10 @@
+import os
+
 from openai import APIError, OpenAI
 
 from config import API_BASE_URL, MODEL
-from messages import build_message, extract_text, normalize_history
-from rag import SessionRAG
+from messages import build_message, extract_text, get_file_path, normalize_history
+from rag import SessionRAG, chunk_text, extract_text_from_file
 from responses import extract_reasoning, render_response, split_thinking_tags
 
 client = OpenAI(
@@ -11,6 +13,26 @@ client = OpenAI(
 )
 
 rag_engine = SessionRAG()
+
+
+SUMMARY_STYLE_PROMPTS = {
+    "Executive summary": (
+        "Write a concise executive summary with the main purpose, key points, "
+        "important findings, and decisions or implications."
+    ),
+    "Detailed summary": (
+        "Write a detailed structured summary. Preserve important technical "
+        "details, examples, constraints, and conclusions."
+    ),
+    "Study notes": (
+        "Create study notes with headings, key concepts, definitions, and "
+        "useful bullet points for review."
+    ),
+    "Action items": (
+        "Extract concrete action items, owners if mentioned, dependencies, "
+        "risks, and follow-up questions."
+    ),
+}
 
 
 def chat(message, history, max_tokens, enable_thinking, enable_rag, rag_files):
@@ -90,3 +112,124 @@ def chat(message, history, max_tokens, enable_thinking, enable_rag, rag_files):
 
     if not thinking and not answer:
         yield ""
+
+
+def summarize_document(rag_files, selected_document, summary_style, max_tokens):
+    if not rag_files:
+        yield "Upload a PDF, TXT, or DOCX document first."
+        return
+
+    file_path = find_selected_file(rag_files, selected_document)
+
+    if file_path is None:
+        yield "Select a document to summarize."
+        return
+
+    try:
+        document_text = extract_text_from_file(file_path)
+    except Exception as error:
+        yield f"Could not read document: {error}"
+        return
+
+    chunks = chunk_text(document_text, chunk_size=900, overlap=80)
+
+    if not chunks:
+        yield "I could not extract readable text from this document."
+        return
+
+    file_name = os.path.basename(file_path)
+    style_prompt = SUMMARY_STYLE_PROMPTS.get(
+        summary_style,
+        SUMMARY_STYLE_PROMPTS["Detailed summary"],
+    )
+    partial_summaries = []
+
+    yield f"Summarizing `{file_name}` in {len(chunks)} pass(es)..."
+
+    for index, chunk in enumerate(chunks, start=1):
+        prompt = (
+            f"{style_prompt}\n\n"
+            "Summarize this document section. Keep details that may be needed "
+            "for the final document-level summary.\n\n"
+            f"Document: {file_name}\n"
+            f"Section {index} of {len(chunks)}:\n{chunk}"
+        )
+
+        try:
+            section_summary = run_non_streaming_completion(
+                prompt,
+                max_tokens=min(int(max_tokens), 2048),
+            )
+        except Exception as error:
+            yield f"Summary request failed on section {index}: {error}"
+            return
+
+        partial_summaries.append(section_summary)
+        yield (
+            f"Summarized {index}/{len(chunks)} section(s)...\n\n"
+            f"Latest section summary:\n\n{section_summary}"
+        )
+
+    final_prompt = (
+        f"{style_prompt}\n\n"
+        "Create one final document-level summary from these section summaries. "
+        "Remove repetition, keep the structure clear, and mention important "
+        "limitations or missing information if the summaries show any.\n\n"
+        f"Document: {file_name}\n\n"
+        "Section summaries:\n\n"
+        + "\n\n".join(
+            f"Section {index}:\n{summary}"
+            for index, summary in enumerate(partial_summaries, start=1)
+        )
+    )
+
+    try:
+        final_summary = run_non_streaming_completion(
+            final_prompt,
+            max_tokens=int(max_tokens),
+        )
+    except Exception as error:
+        yield f"Final summary request failed: {error}"
+        return
+
+    yield f"## Summary: {file_name}\n\n{final_summary}"
+
+
+def find_selected_file(files, selected_document):
+    if not selected_document:
+        return None
+
+    for file in files or []:
+        file_path = get_file_path(file)
+
+        if os.path.basename(file_path) == selected_document:
+            return file_path
+
+    return None
+
+
+def run_non_streaming_completion(prompt, max_tokens):
+    response = client.chat.completions.create(
+        model=MODEL,
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": prompt,
+                    }
+                ],
+            }
+        ],
+        temperature=0.2,
+        max_tokens=max_tokens,
+        extra_body={
+            "top_k": 1,
+            "chat_template_kwargs": {
+                "enable_thinking": False,
+            },
+        },
+    )
+
+    return extract_text(response.choices[0].message.content)
