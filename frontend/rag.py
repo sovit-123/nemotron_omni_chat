@@ -19,8 +19,15 @@ class SessionRAG:
             name="session_documents",
             metadata={"hnsw:space": "cosine"},
         )
-        self.embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+        self._embedding_model = None
         self.uploaded_files = set()
+
+    @property
+    def embedding_model(self):
+        if self._embedding_model is None:
+            self._embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+
+        return self._embedding_model
 
     def apply_context(self, current_message, text, rag_files):
         if not rag_files or not text.strip():
@@ -124,6 +131,21 @@ def extract_text_from_pdf(file_path):
         text += page.extract_text() + "\n"
 
     return text
+
+
+def extract_text_from_file(file_path):
+    ext = Path(file_path).suffix.lower()
+
+    if ext == ".pdf":
+        return extract_text_from_pdf(file_path)
+
+    if ext == ".docx":
+        return extract_text_from_docx(file_path)
+
+    if ext == ".txt":
+        return extract_text_from_txt(file_path)
+
+    raise ValueError(f"Unsupported document type: {ext}")
 
 
 def extract_text_from_docx(file_path):
