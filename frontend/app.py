@@ -77,7 +77,7 @@ with gr.Blocks(
                         variant="primary",
                     )
 
-                summary_output = gr.Markdown()
+                summary_output = gr.Markdown(height=300, label="Summary output")
 
     rag_files.change(
         fn=update_document_choices,
