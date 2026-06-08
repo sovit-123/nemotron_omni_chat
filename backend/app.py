@@ -1,10 +1,14 @@
 import modal
 import os
 import subprocess
+from dotenv import load_dotenv
+
+load_dotenv()
 
 MODEL_NAME = "nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-NVFP4"
+APP_NAME = os.getenv("APP_NAME")
 
-app = modal.App("nemotron-omni-rag")
+app = modal.App(APP_NAME)
 
 VLLM_PORT = 8000
 
