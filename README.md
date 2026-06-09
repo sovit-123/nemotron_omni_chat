@@ -3,7 +3,9 @@
 A multimodal conversational AI system built with:
 - **Backend**: Modal vLLM API running Nemotron model
 - **Frontend**: Gradio UI for local chat interface
-- **Inference**: GPU-accelerated with L40S
+- **Inference**: GPU-accelerated with L40S (Or any GPU we launch the Modal server with)
+
+![](git_media/nemotron-rag-chat-1.png)
 
 ## Architecture
 
@@ -18,14 +20,21 @@ Nemotron NVFP4
 ## Project Structure
 
 ```
-nemotron-gradio-modal/
 ├── backend
 │   ├── app.py
-│   └── requirements.txt
+│   └── .env.example
 ├── frontend
 │   ├── app.py
-│   │   └── app.cpython-312.pyc
-│   └── requirements.txt
+│   ├── chat_service.py
+│   ├── config.py
+│   ├── .env.example
+│   ├── messages.py
+│   ├── rag.py
+│   ├── requirements.txt
+│   ├── responses.py
+│   └── theme.py
+├── .gitignore
+├── LICENSE
 ├── README.md
 └── requirements.txt
 ```
@@ -34,42 +43,56 @@ nemotron-gradio-modal/
 
 ### Backend Setup
 
-1. Create virtual environment:
+* Create virtual environment:
+
 ```bash
 cd backend
 python3 -m venv venv
 source venv/bin/activate
 ```
 
-2. Install dependencies:
+* Install dependencies:
+
 ```bash
 pip install -r requirements.txt
 ```
 
-3. Setup Modal:
+* Setup Modal:
+
 ```bash
 modal setup
 ```
 
-4. Create Hugging Face token at [HF Tokens](https://huggingface.co/settings/tokens)
+* Create a `.env` and fill the application name:
 
-5. Save HF token in Modal:
+```
+APP_NAME="YOUR_APP_NAME_HERE"
+```
+
+* Create Hugging Face token at [HF Tokens](https://huggingface.co/settings/tokens)
+
+* Save HF token in Modal:
+
 ```bash
 modal secret create hf-secret \
 HF_TOKEN=YOUR_HF_TOKEN
 ```
 
-6. Deploy backend:
+* Deploy backend:
+
 ```bash
 modal deploy app.py
 ```
 
-7. Save the endpoint URL provided (format: `https://YOUR-NAME--nemotron-omni-serve.modal.run`)
+* Save the endpoint URL provided (format: `https://YOUR-NAME--nemotron-omni-serve.modal.run`)
 
-8. Test backend:
+* Test backend:
+
 ```bash
-curl https://YOUR-ENDPOINT/v1/models
+curl https://YOUR-NAME--YOUR-APP-NAME.modal.run/v1
 ```
+
+In the above, `YOUR-NAME` is the modal workspace name, and `YOUR-APP-NAME` is the application that you have given in the `backend/.env` file.
 
 ### Frontend Setup
 
@@ -87,7 +110,7 @@ pip install -r requirements.txt
 
 3. Update `.env` with your Modal endpoint:
 ```env
-API_BASE_URL=https://YOUR-ENDPOINT/v1
+API_BASE_URL=https://YOUR-NAME--YOUR-APP-NAME.modal.run/v1
 ```
 
 4. Run frontend:
@@ -101,6 +124,8 @@ python app.py
 
 - **Multimodal Support**: Images, videos, audio, and text
 - **Conversation History**: In-memory history per session
+- **RAG Support**: Supports RAG via ChromaDB
+- **Document Summarization Support**: A different workflow to summarize large documents
 - **Local UI**: Gradio interface running locally
 - **GPU Inference**: Cloud GPU acceleration via Modal
 - **OpenAI-compatible API**: Uses OpenAI client library
@@ -111,3 +136,4 @@ python app.py
 - Videos: `.mp4`
 - Audio: `.mp3`, `.wav`
 - Text: Plain text input
+- `.pdf`, `.docx`, and `.txt` for RAG

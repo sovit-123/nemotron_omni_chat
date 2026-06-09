@@ -34,7 +34,7 @@ with gr.Blocks(
         with gr.Column(scale=3):
             max_tokens = gr.Slider(
                 minimum=2048,
-                maximum=16000,
+                maximum=32000,
                 value=2048,
                 step=256,
                 label="Max tokens",
